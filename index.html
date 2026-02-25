@@ -64,6 +64,45 @@
     .btn-query { background-color: #198754; color: white; width: 100%; margin-bottom: 10px; }
     .btn-scan  { background-color: #0d6efd; color: white; width: 100%; font-size: 18px; padding: 16px;}
 
+    /* ── 隱私權按鈕與彈窗 UI ── */
+    .link-button {
+      background: none; border: none; padding: 0; color: #0d6efd;
+      text-decoration: underline; cursor: pointer; font-size: 14px;
+    }
+    /* 隱私權摘要 Modal */
+    #privacyModal.modal {
+      display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.55);
+      z-index: 3000; justify-content: center; align-items: center; padding: 15px;
+    }
+    
+    /* 更新：改為 Flex 排版並限制最大高度 */
+    #privacyModal .modal-content {
+      background: #fff; border-radius: 12px; width: 100%; max-width: 520px;
+      max-height: 85vh; /* 限制最大高度為螢幕的 85% */
+      display: flex; flex-direction: column; /* 允許內部區塊彈性伸縮 */
+      padding: 20px; text-align: left; line-height: 1.6;
+      box-sizing: border-box;
+    }
+
+    .privacy-title { margin: 0 0 10px 0; font-size: 18px; font-weight: bold; flex-shrink: 0; }
+    
+    /* 新增：讓內容區塊產生捲軸 */
+    #privacyContent {
+      overflow-y: auto; /* 內容過長時出現上下捲軸 */
+      flex: 1;          /* 佔滿剩餘空間 */
+      padding-right: 5px; /* 避免文字貼齊捲軸 */
+      margin-bottom: 10px; /* 與下方按鈕保持距離 */
+    }
+
+    /* 美化捲軸 (適用於 Webkit 瀏覽器如 Chrome/Safari/Edge) */
+    #privacyContent::-webkit-scrollbar { width: 6px; }
+    #privacyContent::-webkit-scrollbar-thumb { background: #ccc; border-radius: 4px; }
+
+    .privacy-list { margin: 0 0 0 20px; padding: 0; font-size: 14px; color: #333; }
+    .privacy-list li { margin-bottom: 8px; }
+    .privacy-footnote { margin-top: 15px; font-size: 12.5px; color: #666; }
+
+
     /* ── 掃描器覆蓋層 ── */
     #scanner-container {
       display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
@@ -174,6 +213,13 @@
     <strong>⚠️ 提醒：</strong>食品編碼開頭三碼，代表發行該條碼的 GS1 會員組織所在國家/地區，<span style="text-decoration: underline;">不等於</span>產品實際製造國。
   </div>
 
+  <!-- 隱私權按鈕 -->
+  <div style="margin: 5px 0 15px 0; text-align: left;">
+    <button type="button" class="link-button" id="ui-privacy-link" onclick="openPrivacyModal()">
+      隱私權摘要
+    </button>
+  </div>
+
   <div class="card">
     <label id="ui-input-label">手動輸入商品條碼 (EAN-13)</label>
     <div class="input-group">
@@ -211,6 +257,17 @@
     <button class="btn-cancel-scan" id="ui-btn-cancel" onclick="stopScan()">取消</button>
   </div>
 
+  <!-- 隱私權彈窗 -->
+  <div id="privacyModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="privacyTitle">
+    <div class="modal-content">
+      <h3 class="privacy-title" id="privacyTitle">隱私權摘要 (Privacy Summary)</h3>
+      <div id="privacyContent"></div>
+      <button type="button" class="btn-cancel-scan" style="width:100%; margin-top: 15px; padding: 10px;" id="ui-privacy-close" onclick="closePrivacyModal()">
+        關閉
+      </button>
+    </div>
+  </div>
+
   <!-- 結果彈出視窗 -->
   <div id="resultModal" class="modal">
     <div class="modal-content">
@@ -231,6 +288,16 @@
   </div>
 
   <script>
+    // ── 隱私權彈窗控制 ──
+    function openPrivacyModal() { document.getElementById('privacyModal').style.display = 'flex'; }
+    function closePrivacyModal() { document.getElementById('privacyModal').style.display = 'none'; }
+    
+    document.addEventListener('click', (e) => {
+      const modal = document.getElementById('privacyModal');
+      if (modal && modal.style.display === 'flex' && e.target === modal) closePrivacyModal();
+    });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closePrivacyModal(); });
+
     // ── 全域變數 ──
     let isQuaggaScanning = false;
     let quaggaLastCode   = "";
@@ -244,6 +311,17 @@
     const translations = {
       'zh-TW': {
         title: 'GS1 食品國別查詢',
+        privacyLink   : '隱私權摘要',
+        privacyTitle  : '隱私權聲明與告知事項 (Privacy Summary)',
+        privacyHtml   : `
+          <ul class="privacy-list">
+            <li><strong>處理方式與範圍：</strong>本工具為純前端網頁應用程式，EAN-13 條碼掃描與 GS1 國別前置碼判讀皆在您的裝置本機瀏覽器內完成。本程式不會將掃描的條碼、相機影像或查詢結果上傳至任何後端伺服器。</li>
+            <li><strong>權限與控制：</strong>相機權限僅在您啟動掃描時使用，您可於瀏覽器設定中隨時撤銷權限。我們不需註冊帳號、不建立使用者數位足跡或進行建檔 (Profiling)。</li>
+            <li><strong>第三方與連線紀錄：</strong>本頁面透過第三方 CDN 載入開源條碼套件，該 CDN 供應商或網頁代管平台 (如 GitHub Pages) 可能依其系統預設保留一般技術性存取紀錄（如 IP 位址、User-Agent 等）。</li>
+            <li><strong>資料來源：</strong>本程式內建之 GS1 前置碼對照資料屬公開資訊彙整 (如 Wikipedia 等)，僅供參考。</li>
+            <li><strong>當事人權利與聯絡方式：</strong>為符合台灣個資法 (PDPA) 及歐盟 GDPR 第13條之精神，若您對個人資料處理有任何疑問或欲行使相關權利，請聯繫：<a href="mailto:sspig0127+github@gmail.com">sspig0127+github@gmail.com</a></li>
+          </ul>
+        `,
         warningMain: '<strong>⚠️ 提醒：</strong>食品編碼開頭三碼，代表發行該條碼的 GS1 會員組織所在國家/地區，<span style="text-decoration: underline;">不等於</span>產品實際製造國。',
         warningScan: '請將條碼對準畫面中央紅線區域',
         warningModal: '<strong>⚠️ 提醒：</strong>此國家/地區為該條碼的發行組織所在地，不代表該產品的實際原產地或製造國。',
@@ -264,6 +342,17 @@
       },
       'en': {
         title: 'GS1 Food Barcode Lookup',
+        privacyLink   : 'Privacy Summary',
+        privacyTitle  : 'Privacy Summary',
+        privacyHtml   : `
+          <ul class="privacy-list">
+            <li><strong>Processing & Scope:</strong> This is a client-side web application. EAN-13 scanning and GS1 prefix lookups run entirely in your local browser. No barcodes, camera frames, or lookup results are uploaded to any server.</li>
+            <li><strong>Permissions & Control:</strong> Camera permission is requested only when initiating a scan and can be revoked anytime in your browser settings. No account is required, and we do not profile or track users.</li>
+            <li><strong>Third-party & Logs:</strong> This page loads open-source libraries via a third-party CDN. The CDN or hosting provider (e.g., GitHub Pages) may temporarily log standard technical access data (e.g., IP address, User-Agent).</li>
+            <li><strong>Data Source:</strong> Internal GS1 prefix mappings are compiled from public references (e.g., Wikipedia) for informational purposes.</li>
+            <li><strong>Data Subject Rights & Contact:</strong> In compliance with Taiwan PDPA and GDPR Article 13, for any privacy inquiries or to exercise your rights, please contact: <a href="mailto:sspig0127+github@gmail.com">sspig0127+github@gmail.com</a></li>
+          </ul>
+        `,
         warningMain: '<strong>⚠️ Note:</strong> The first 3 digits represent the GS1 member organization country/region that issued the barcode. It does <span style="text-decoration: underline;">NOT</span> necessarily mean the product was manufactured there.',
         warningScan: 'Align the barcode within the red line',
         warningModal: '<strong>⚠️ Note:</strong> This country/region indicates where the barcode was issued, not the product\'s country of origin.',
@@ -301,6 +390,12 @@
       document.getElementById('ui-modal-barcode-lbl').innerText = t.modalBarcodeLbl;
       document.getElementById('ui-modal-prefix-lbl').innerText = t.modalPrefixLbl;
       document.getElementById('ui-btn-close').innerText = t.btnClose;
+      
+      // Privacy UI Update
+      document.getElementById('ui-privacy-link').innerText = t.privacyLink;
+      document.getElementById('privacyTitle').innerText = t.privacyTitle;
+      document.getElementById('privacyContent').innerHTML = t.privacyHtml;
+      document.getElementById('ui-privacy-close').innerText = t.btnClose;
     }
 
     // ── GS1 國別對照表核心邏輯 ──
