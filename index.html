@@ -1,0 +1,663 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>食品條碼 GS1 國別查詢工具</title>
+  
+  <!-- 載入 Quagga2 SDK (專責 1D / EAN-13 條碼) -->
+  <script src="https://cdn.jsdelivr.net/npm/@ericblade/quagga2@1.12.1/dist/quagga.min.js"></script>
+  
+  <style>
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background-color: #f0f2f5;
+      margin: 0; padding: 15px; box-sizing: border-box;
+    }
+    .header {
+      display: flex; justify-content: space-between;
+      align-items: center; margin-bottom: 15px;
+    }
+    .title { margin: 0; color: #333; font-size: 20px; font-weight: bold; }
+    .lang-select {
+      padding: 5px 8px; border-radius: 5px;
+      border: 1px solid #ccc; font-size: 14px; background: #fff;
+    }
+
+    /* 提醒區塊 */
+    .alert-warning {
+      background-color: #fff3cd;
+      color: #856404;
+      border: 1px solid #ffeeba;
+      padding: 12px 15px;
+      border-radius: 8px;
+      font-size: 14px;
+      line-height: 1.5;
+      margin-bottom: 15px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
+    .alert-warning strong { color: #d32f2f; }
+
+    .card {
+      background: #fff; padding: 20px; border-radius: 10px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 15px;
+    }
+    
+    label { font-weight: bold; display: block; margin-bottom: 8px; color: #444; }
+    .input-group {
+      display: flex; gap: 8px; margin-bottom: 15px;
+    }
+    input[type="text"] {
+      flex: 1; padding: 12px; font-size: 18px; letter-spacing: 1px;
+      border: 1px solid #ccc; border-radius: 6px;
+      background-color: #fafafa; outline: none;
+    }
+    input[type="text"]:focus {
+      border-color: #0d6efd; box-shadow: 0 0 5px rgba(13, 110, 253, 0.3);
+    }
+    button {
+      padding: 12px; font-size: 16px; border: none; border-radius: 6px; 
+      cursor: pointer; font-weight: bold; transition: opacity 0.2s;
+    }
+    button:active { opacity: 0.8; }
+    
+    .btn-query { background-color: #198754; color: white; width: 100%; margin-bottom: 10px; }
+    .btn-scan  { background-color: #0d6efd; color: white; width: 100%; font-size: 18px; padding: 16px;}
+
+    /* ── 掃描器覆蓋層 ── */
+    #scanner-container {
+      display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.95); z-index: 1000;
+      flex-direction: column; align-items: center;
+      padding: 8px 10px;
+      padding-top: calc(10px + env(safe-area-inset-top, 0px));
+      padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+      box-sizing: border-box;
+    }
+
+    /* 頂部操作列 */
+    .top-controls-wrap {
+      flex-shrink: 0; width: 100%; max-width: 520px;
+      display: flex; align-items: center; gap: 8px; margin-bottom: 12px;
+    }
+    .camera-selector-wrap { flex: 1; display: flex; align-items: center; gap: 8px; }
+    .camera-selector-wrap label { color: #fff; font-size: 14px; white-space: nowrap; margin: 0; font-weight: normal; }
+    #cameraSelect {
+      flex: 1; padding: 8px 10px; font-size: 14px;
+      border-radius: 6px; border: 1px solid rgba(255,255,255,0.35);
+      background: rgba(255,255,255,0.12); color: #fff;
+    }
+    #cameraSelect option { color: #333; background: #fff; }
+    
+    /* 手電筒按鈕與動畫 */
+    #btn-torch {
+      display: none; flex-shrink: 0; padding: 8px 14px; font-size: 18px;
+      border-radius: 6px; background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.4); color: #fff; cursor: pointer;
+    }
+    #btn-torch.active { background: #ffc107; color: #000; border-color: #ffc107; }
+    @keyframes shake {
+      0% { transform: translateX(0); } 25% { transform: translateX(-4px); }
+      50% { transform: translateX(4px); } 75% { transform: translateX(-4px); } 100% { transform: translateX(0); }
+    }
+    .error-shake { animation: shake 0.3s; background: #dc3545 !important; border-color: #dc3545 !important; }
+
+    /* Quagga2 引擎容器 */
+    #reader-wrap {
+      width: 100%; max-width: 520px; flex: 1; min-height: 0;
+      position: relative; overflow: hidden; border-radius: 10px; background: #000;
+    }
+    #quagga-reader { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+    #quagga-reader video, #quagga-reader canvas {
+      width: 100%; height: 100%; object-fit: cover; position: absolute; top: 0; left: 0;
+    }
+
+    /* 輔助 UI 框 (1D 長條形) */
+    #scanGuide {
+      position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+      pointer-events: none; box-sizing: border-box;
+      border: 1px solid rgba(255,255,255,0.12); border-radius: 10px;
+      filter: drop-shadow(0 0 6px rgba(0,0,0,0.35)); z-index: 10;
+      width: min(90%, 460px); height: clamp(110px, 20vh, 160px);
+    }
+    .corner {
+      position: absolute; width: 26px; height: 26px; box-sizing: border-box;
+      border: 4px solid rgba(0, 229, 255, 0.9); filter: drop-shadow(0 0 6px rgba(0,229,255,0.18));
+    }
+    .corner.tl { left: -2px; top: -2px; border-right: 0; border-bottom: 0; border-top-left-radius: 10px; }
+    .corner.tr { right: -2px; top: -2px; border-left: 0; border-bottom: 0; border-top-right-radius: 10px; }
+    .corner.bl { left: -2px; bottom: -2px; border-right: 0; border-top: 0; border-bottom-left-radius: 10px; }
+    .corner.br { right: -2px; bottom: -2px; border-left: 0; border-top: 0; border-bottom-right-radius: 10px; }
+    .scan-line {
+      position: absolute; left: 10px; right: 10px; top: 50%; height: 2px;
+      background: rgba(255, 70, 70, 0.85); box-shadow: 0 0 10px rgba(255, 70, 70, 0.35); transform: translateY(-50%);
+    }
+
+    .btn-cancel-scan {
+      flex-shrink: 0; margin-top: 15px; margin-bottom: 4px;
+      background-color: #dc3545; color: white; width: auto; padding: 10px 30px; font-size: 16px;
+    }
+
+    /* ── 結果 Modal ── */
+    .modal {
+      display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.6); z-index: 2000; justify-content: center; align-items: center;
+      padding: 15px;
+    }
+    .modal-content {
+      background: white; padding: 25px; border-radius: 12px; width: 100%; max-width: 420px;
+      text-align: center; font-size: 16px; line-height: 1.6; position: relative;
+    }
+    .modal-title { font-size: 22px; font-weight: bold; margin-top: 0; margin-bottom: 15px; color: #198754; }
+    .barcode-result { font-size: 24px; font-weight: bold; letter-spacing: 2px; color: #333; margin: 10px 0; background: #f8f9fa; padding: 10px; border-radius: 6px;}
+    .country-result { font-size: 28px; font-weight: bold; color: #0d6efd; margin: 15px 0; }
+    .prefix-info { font-size: 15px; color: #666; margin-bottom: 15px;}
+    
+    .modal-warning {
+      background-color: #fff3cd; color: #856404; font-size: 13px; text-align: left;
+      padding: 10px; border-radius: 6px; margin: 15px 0; border-left: 4px solid #ffc107;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <h1 class="title" id="ui-title">GS1 食品國別查詢</h1>
+    <select class="lang-select" id="langSelector" onchange="changeLanguage()">
+      <option value="zh-TW" selected>繁體中文</option>
+      <option value="en">English</option>
+    </select>
+  </div>
+
+  <!-- 首頁固定提醒 -->
+  <div class="alert-warning" id="ui-warning-main">
+    <strong>⚠️ 提醒：</strong>食品編碼開頭三碼，代表發行該條碼的 GS1 會員組織所在國家/地區，<span style="text-decoration: underline;">不等於</span>產品實際製造國。
+  </div>
+
+  <div class="card">
+    <label id="ui-input-label">手動輸入商品條碼 (EAN-13)</label>
+    <div class="input-group">
+      <input type="text" id="barcodeInput" placeholder="例如: 4710000000000" inputmode="numeric" pattern="[0-9]*">
+    </div>
+    <button class="btn-query" id="ui-btn-query" onclick="manualQuery()">🔍 查詢國別</button>
+  </div>
+
+  <button class="btn-scan" id="ui-btn-scan" onclick="startScan()">📷 啟動相機掃描條碼</button>
+
+  <!-- 掃描畫面 UI -->
+  <div id="scanner-container">
+    <div class="alert-warning" style="width: 100%; max-width: 520px; font-size: 13px; padding: 8px; margin-bottom: 10px; background: rgba(255,243,205,0.9); border:none;" id="ui-warning-scan">
+      請將條碼對準畫面中央紅線區域
+    </div>
+    
+    <div class="top-controls-wrap">
+      <div class="camera-selector-wrap">
+        <select id="cameraSelect" onchange="switchCamera(this.value)" disabled>
+          <option id="ui-camera-loading-opt">載入鏡頭清單...</option>
+        </select>
+      </div>
+      <button id="btn-torch" onclick="toggleTorch()" title="開關手電筒">🔦</button>
+    </div>
+
+    <div id="reader-wrap">
+      <div id="quagga-reader"></div>
+      <div id="scanGuide">
+        <span class="corner tl"></span><span class="corner tr"></span>
+        <span class="corner bl"></span><span class="corner br"></span>
+        <div class="scan-line"></div>
+      </div>
+    </div>
+
+    <button class="btn-cancel-scan" id="ui-btn-cancel" onclick="stopScan()">取消</button>
+  </div>
+
+  <!-- 結果彈出視窗 -->
+  <div id="resultModal" class="modal">
+    <div class="modal-content">
+      <h2 class="modal-title" id="ui-modal-title">查詢結果</h2>
+      <div class="prefix-info" id="ui-modal-barcode-lbl">掃描條碼：</div>
+      <div class="barcode-result" id="modalBarcode">4711234567890</div>
+      
+      <div class="prefix-info"><span id="ui-modal-prefix-lbl">GS1 前置碼 (前 3 碼)：</span><strong style="color:#000;" id="modalPrefix">471</strong></div>
+      
+      <div class="country-result" id="modalCountry">台灣 (Taiwan)</div>
+
+      <div class="modal-warning" id="ui-warning-modal">
+        <strong>⚠️ 提醒：</strong>此國家/地區為該條碼的發行組織所在地，不代表該產品的實際原產地或製造國。
+      </div>
+
+      <button class="btn-cancel-scan" style="width:100%; margin-top:10px;" id="ui-btn-close" onclick="closeModal()">關閉</button>
+    </div>
+  </div>
+
+  <script>
+    // ── 全域變數 ──
+    let isQuaggaScanning = false;
+    let quaggaLastCode   = "";
+    let quaggaCodeCount  = 0;
+    const REQUIRED_MATCHES = 2; // 防抖：連續讀取兩次相同才算成功
+    let currentCameraId  = null;
+    let isTorchOn        = false;
+    let currentLang      = 'zh-TW';
+
+    // ── 多國語系 ──
+    const translations = {
+      'zh-TW': {
+        title: 'GS1 食品國別查詢',
+        warningMain: '<strong>⚠️ 提醒：</strong>食品編碼開頭三碼，代表發行該條碼的 GS1 會員組織所在國家/地區，<span style="text-decoration: underline;">不等於</span>產品實際製造國。',
+        warningScan: '請將條碼對準畫面中央紅線區域',
+        warningModal: '<strong>⚠️ 提醒：</strong>此國家/地區為該條碼的發行組織所在地，不代表該產品的實際原產地或製造國。',
+        inputLabel: '手動輸入商品條碼 (EAN-13)',
+        placeholder: '例如: 4710000000000',
+        btnQuery: '🔍 查詢國別',
+        btnScan: '📷 啟動相機掃描條碼',
+        camLoading: '載入鏡頭...',
+        camDefault: '預設鏡頭',
+        btnCancel: '取消',
+        modalTitle: '查詢結果',
+        modalBarcodeLbl: '掃描條碼：',
+        modalPrefixLbl: 'GS1 前置碼 (前 3 碼)：',
+        btnClose: '關閉',
+        alertEmpty: '請輸入有效的條碼數字！',
+        alertCamFail: '相機啟動失敗，請確認是否已授權。',
+        unknownCode: '未知前置碼或未分配'
+      },
+      'en': {
+        title: 'GS1 Food Barcode Lookup',
+        warningMain: '<strong>⚠️ Note:</strong> The first 3 digits represent the GS1 member organization country/region that issued the barcode. It does <span style="text-decoration: underline;">NOT</span> necessarily mean the product was manufactured there.',
+        warningScan: 'Align the barcode within the red line',
+        warningModal: '<strong>⚠️ Note:</strong> This country/region indicates where the barcode was issued, not the product\'s country of origin.',
+        inputLabel: 'Manual Barcode Entry (EAN-13)',
+        placeholder: 'e.g., 4710000000000',
+        btnQuery: '🔍 Lookup Country',
+        btnScan: '📷 Start Camera Scanner',
+        camLoading: 'Loading cameras...',
+        camDefault: 'Default Camera',
+        btnCancel: 'Cancel',
+        modalTitle: 'Lookup Result',
+        modalBarcodeLbl: 'Scanned Barcode:',
+        modalPrefixLbl: 'GS1 Prefix (first 3 digits): ',
+        btnClose: 'Close',
+        alertEmpty: 'Please enter a valid barcode number!',
+        alertCamFail: 'Camera failed to start. Please check permissions.',
+        unknownCode: 'Unknown or Unassigned Prefix'
+      }
+    };
+
+    function changeLanguage() {
+      currentLang = document.getElementById('langSelector').value;
+      const t = translations[currentLang];
+      
+      document.getElementById('ui-title').innerText = t.title;
+      document.getElementById('ui-warning-main').innerHTML = t.warningMain;
+      document.getElementById('ui-warning-scan').innerText = t.warningScan;
+      document.getElementById('ui-warning-modal').innerHTML = t.warningModal;
+      document.getElementById('ui-input-label').innerText = t.inputLabel;
+      document.getElementById('barcodeInput').placeholder = t.placeholder;
+      document.getElementById('ui-btn-query').innerText = t.btnQuery;
+      document.getElementById('ui-btn-scan').innerText = t.btnScan;
+      document.getElementById('ui-btn-cancel').innerText = t.btnCancel;
+      document.getElementById('ui-modal-title').innerText = t.modalTitle;
+      document.getElementById('ui-modal-barcode-lbl').innerText = t.modalBarcodeLbl;
+      document.getElementById('ui-modal-prefix-lbl').innerText = t.modalPrefixLbl;
+      document.getElementById('ui-btn-close').innerText = t.btnClose;
+    }
+
+    // ── GS1 國別對照表核心邏輯 ──
+    function getGS1Country(barcode) {
+      if (!barcode || barcode.length < 3) return translations[currentLang].unknownCode;
+      
+      // 確保是補滿 13 碼的 EAN，若掃到 UPC-A (12碼)，Quagga 通常會幫忙補 0
+      let fullBarcode = barcode;
+      if (fullBarcode.length === 12) fullBarcode = "0" + fullBarcode;
+
+      const prefix = parseInt(fullBarcode.substring(0, 3), 10);
+
+      // 北美
+      if (prefix >= 0 && prefix <= 139) return "美國 (US) / 加拿大相容";
+      if (prefix === 754 || prefix === 755) return "加拿大 (Canada)";
+      
+      // 亞洲
+      if (prefix >= 450 && prefix <= 459) return "日本 (Japan)";
+      if (prefix === 471) return "台灣 (Taiwan)";
+      if (prefix === 479) return "斯里蘭卡 (Sri Lanka)";
+      if (prefix === 480) return "菲律賓 (Philippines)";
+      if (prefix === 489) return "香港 (Hong Kong)";
+      if (prefix >= 490 && prefix <= 499) return "日本 (Japan)";
+      if (prefix >= 680 && prefix <= 681) return "中國 (China)";
+      if (prefix >= 690 && prefix <= 699) return "中國 (China)";
+      if (prefix === 865) return "蒙古 (Mongolia)";
+      if (prefix === 867) return "北韓 (North Korea)";
+      if (prefix >= 880 && prefix <= 881) return "南韓 (South Korea)";
+      if (prefix === 883) return "緬甸 (Myanmar)";
+      if (prefix === 884) return "柬埔寨 (Cambodia)";
+      if (prefix === 885) return "泰國 (Thailand)";
+      if (prefix === 888) return "新加坡 (Singapore)";
+      if (prefix === 890) return "印度 (India)";
+      if (prefix === 893) return "越南 (Vietnam)";
+      if (prefix === 894) return "孟加拉 (Bangladesh)";
+      if (prefix === 896) return "巴基斯坦 (Pakistan)";
+      if (prefix === 899) return "印尼 (Indonesia)";
+      if (prefix === 955) return "馬來西亞 (Malaysia)";
+      if (prefix === 958) return "澳門 (Macau)";
+
+      // 歐洲
+      if (prefix >= 300 && prefix <= 379) return "法國與摩納哥 (France & Monaco)";
+      if (prefix === 380) return "保加利亞 (Bulgaria)";
+      if (prefix === 383) return "斯洛維尼亞 (Slovenia)";
+      if (prefix === 385) return "克羅埃西亞 (Croatia)";
+      if (prefix === 387) return "波士尼亞與赫塞哥維納 (Bosnia & Herzegovina)";
+      if (prefix === 389) return "蒙特內哥羅 (Montenegro)";
+      if (prefix >= 400 && prefix <= 440) return "德國 (Germany)";
+      if (prefix >= 460 && prefix <= 469) return "俄羅斯 (Russia)";
+      if (prefix === 474) return "愛沙尼亞 (Estonia)";
+      if (prefix === 475) return "拉脫維亞 (Latvia)";
+      if (prefix === 477) return "立陶宛 (Lithuania)";
+      if (prefix === 481) return "白俄羅斯 (Belarus)";
+      if (prefix === 482) return "烏克蘭 (Ukraine)";
+      if (prefix === 484) return "摩爾多瓦 (Moldova)";
+      if (prefix >= 500 && prefix <= 509) return "英國 (UK)";
+      if (prefix >= 520 && prefix <= 521) return "希臘 (Greece)";
+      if (prefix === 529) return "賽普勒斯 (Cyprus)";
+      if (prefix === 530) return "阿爾巴尼亞 (Albania)";
+      if (prefix === 531) return "北馬其頓 (North Macedonia)";
+      if (prefix === 535) return "馬爾他 (Malta)";
+      if (prefix === 539) return "愛爾蘭 (Ireland)";
+      if (prefix >= 540 && prefix <= 549) return "比利時與盧森堡 (Belgium & Luxembourg)";
+      if (prefix === 560) return "葡萄牙 (Portugal)";
+      if (prefix === 569) return "冰島 (Iceland)";
+      if (prefix >= 570 && prefix <= 579) return "丹麥 (Denmark)";
+      if (prefix === 590) return "波蘭 (Poland)";
+      if (prefix === 594) return "羅馬尼亞 (Romania)";
+      if (prefix === 599) return "匈牙利 (Hungary)";
+      if (prefix >= 640 && prefix <= 649) return "芬蘭 (Finland)";
+      if (prefix >= 700 && prefix <= 709) return "挪威 (Norway)";
+      if (prefix >= 730 && prefix <= 739) return "瑞典 (Sweden)";
+      if (prefix >= 760 && prefix <= 769) return "瑞士與列支敦斯登 (Switzerland)";
+      if (prefix >= 800 && prefix <= 839) return "義大利 (Italy)";
+      if (prefix >= 840 && prefix <= 849) return "西班牙與安道爾 (Spain)";
+      if (prefix === 858) return "斯洛伐克 (Slovakia)";
+      if (prefix === 859) return "捷克 (Czech Republic)";
+      if (prefix === 860) return "塞爾維亞 (Serbia)";
+      if (prefix >= 870 && prefix <= 879) return "荷蘭 (Netherlands)";
+      if (prefix >= 900 && prefix <= 919) return "奧地利 (Austria)";
+
+      // 中東與中亞
+      if (prefix === 470) return "吉爾吉斯 (Kyrgyzstan)";
+      if (prefix === 476) return "亞塞拜然 (Azerbaijan)";
+      if (prefix === 478) return "烏茲別克 (Uzbekistan)";
+      if (prefix === 483) return "土庫曼 (Turkmenistan)";
+      if (prefix === 485) return "亞美尼亞 (Armenia)";
+      if (prefix === 486) return "喬治亞 (Georgia)";
+      if (prefix === 487) return "哈薩克 (Kazakhstan)";
+      if (prefix === 488) return "塔吉克 (Tajikistan)";
+      if (prefix === 528) return "黎巴嫩 (Lebanon)";
+      if (prefix === 607) return "阿曼 (Oman)";
+      if (prefix === 608) return "巴林 (Bahrain)";
+      if (prefix === 621) return "敘利亞 (Syria)";
+      if (prefix === 625) return "約旦 (Jordan)";
+      if (prefix === 626) return "伊朗 (Iran)";
+      if (prefix === 627) return "科威特 (Kuwait)";
+      if (prefix === 628) return "沙烏地阿拉伯 (Saudi Arabia)";
+      if (prefix === 629) return "阿拉伯聯合大公國 (UAE)";
+      if (prefix === 630) return "卡達 (Qatar)";
+      if (prefix === 729) return "以色列 (Israel)";
+      if (prefix === 868 || prefix === 869) return "土耳其 (Turkey)";
+
+      // 中南美洲
+      if (prefix === 740) return "瓜地馬拉 (Guatemala)";
+      if (prefix === 741) return "薩爾瓦多 (El Salvador)";
+      if (prefix === 742) return "宏都拉斯 (Honduras)";
+      if (prefix === 743) return "尼加拉瓜 (Nicaragua)";
+      if (prefix === 744) return "哥斯大黎加 (Costa Rica)";
+      if (prefix === 745) return "巴拿馬 (Panama)";
+      if (prefix === 746) return "多明尼加共和國 (Dominican Republic)";
+      if (prefix === 750) return "墨西哥 (Mexico)";
+      if (prefix === 759) return "委內瑞拉 (Venezuela)";
+      if (prefix === 770 || prefix === 771) return "哥倫比亞 (Colombia)";
+      if (prefix === 773) return "烏拉圭 (Uruguay)";
+      if (prefix === 775) return "秘魯 (Peru)";
+      if (prefix === 777) return "玻利維亞 (Bolivia)";
+      if (prefix === 778 || prefix === 779) return "阿根廷 (Argentina)";
+      if (prefix === 780) return "智利 (Chile)";
+      if (prefix === 784) return "巴拉圭 (Paraguay)";
+      if (prefix === 786) return "厄瓜多 (Ecuador)";
+      if (prefix === 789 || prefix === 790) return "巴西 (Brazil)";
+      if (prefix === 850) return "古巴 (Cuba)";
+
+      // 非洲
+      if (prefix >= 600 && prefix <= 601) return "南非 (South Africa)";
+      if (prefix === 603) return "迦納 (Ghana)";
+      if (prefix === 604) return "塞內加爾 (Senegal)";
+      if (prefix === 605) return "烏干達 (Uganda)";
+      if (prefix === 606) return "安哥拉 (Angola)";
+      if (prefix === 609) return "模里西斯 (Mauritius)";
+      if (prefix === 611) return "摩洛哥 (Morocco)";
+      if (prefix === 612) return "索馬利亞 (Somalia)";
+      if (prefix === 613) return "阿爾及利亞 (Algeria)";
+      if (prefix === 615) return "奈及利亞 (Nigeria)";
+      if (prefix === 616) return "肯亞 (Kenya)";
+      if (prefix === 617) return "喀麥隆 (Cameroon)";
+      if (prefix === 618) return "象牙海岸 (Ivory Coast)";
+      if (prefix === 619) return "突尼西亞 (Tunisia)";
+      if (prefix === 620) return "坦尚尼亞 (Tanzania)";
+      if (prefix === 622) return "埃及 (Egypt)";
+      if (prefix === 624) return "利比亞 (Libya)";
+      if (prefix === 631) return "納米比亞 (Namibia)";
+      if (prefix === 632) return "盧安達 (Rwanda)";
+
+      // 大洋洲
+      if (prefix >= 930 && prefix <= 939) return "澳洲 (Australia)";
+      if (prefix >= 940 && prefix <= 949) return "紐西蘭 (New Zealand)";
+
+      // 特殊用途
+      if (prefix >= 20 && prefix <= 29) return "受限號碼 (區域內/生鮮秤重)";
+      if (prefix >= 40 && prefix <= 49) return "受限號碼 (企業內部使用)";
+      if (prefix >= 200 && prefix <= 299) return "受限號碼 (區域內使用)";
+      if (prefix === 950) return "GS1 全球總部";
+      if (prefix === 977) return "連續出版物 (期刊/雜誌)";
+      if (prefix === 978 || prefix === 979) return "書籍與樂譜 (Bookland)";
+      if (prefix === 980) return "退款收據專用";
+      if (prefix >= 981 && prefix <= 983) return "共同貨幣區優惠券";
+      if (prefix >= 990 && prefix <= 999) return "優惠券/折價券條碼";
+
+      return translations[currentLang].unknownCode;
+    }
+
+    // ── 相機資源取得與啟動 ──
+    async function getCameraList() {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return [];
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        return devices.filter(d => d.kind === 'videoinput');
+      } catch(e) { return []; }
+    }
+
+    async function startScan() {
+      document.getElementById('scanner-container').style.display = 'flex';
+      const t = translations[currentLang];
+      const select = document.getElementById('cameraSelect');
+      select.innerHTML = `<option>${t.camLoading}</option>`;
+      select.disabled = true;
+
+      const cameras = await getCameraList();
+      if (cameras.length > 0) {
+        select.innerHTML = '';
+        cameras.forEach((cam, idx) => {
+          const opt = document.createElement('option');
+          opt.value = cam.deviceId;
+          opt.text = cam.label || `${t.camDefault} ${idx + 1}`;
+          select.appendChild(opt);
+        });
+        select.disabled = false;
+        const backCam = cameras.find(c => /back|rear|environment|後/i.test(c.label));
+        const defaultCamId = backCam ? backCam.deviceId : cameras[cameras.length - 1].deviceId;
+        select.value = defaultCamId;
+        await startEngine(defaultCamId);
+      } else {
+        select.innerHTML = `<option value="">${t.camDefault}</option>`;
+        await startEngineFallback();
+      }
+    }
+
+    async function startEngine(deviceId) {
+      if (isQuaggaScanning) Quagga.stop();
+      currentCameraId = deviceId;
+      quaggaLastCode = ""; quaggaCodeCount = 0;
+      document.getElementById('quagga-reader').innerHTML = ''; 
+
+      return new Promise((resolve, reject) => {
+        Quagga.init({
+          inputStream: {
+            name: "Live", type: "LiveStream", target: document.querySelector('#quagga-reader'),
+            constraints: { deviceId: { exact: deviceId }, width: { ideal: 1280 }, height: { ideal: 720 } }
+          },
+          decoder: { readers: ["ean_reader", "ean_8_reader", "upc_reader", "upc_e_reader"] }, // 專注於商品條碼
+          locate: true
+        }, function(err) {
+          if (err) { alert(translations[currentLang].alertCamFail); reject(err); stopScan(); return; }
+          Quagga.start();
+          isQuaggaScanning = true;
+          setTimeout(() => checkTorchCapability(Quagga.CameraAccess.getActiveTrack()), 800);
+          resolve();
+        });
+      });
+    }
+
+    async function startEngineFallback() {
+      if (isQuaggaScanning) Quagga.stop();
+      currentCameraId = null;
+      quaggaLastCode = ""; quaggaCodeCount = 0;
+      document.getElementById('quagga-reader').innerHTML = '';
+      return new Promise((resolve, reject) => {
+        Quagga.init({
+          inputStream: {
+            name: "Live", type: "LiveStream", target: document.querySelector('#quagga-reader'),
+            constraints: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } }
+          },
+          decoder: { readers: ["ean_reader", "ean_8_reader", "upc_reader", "upc_e_reader"] },
+          locate: true
+        }, function(err) {
+          if (err) { alert(translations[currentLang].alertCamFail); reject(err); stopScan(); return; }
+          Quagga.start();
+          isQuaggaScanning = true;
+          setTimeout(() => checkTorchCapability(Quagga.CameraAccess.getActiveTrack()), 800);
+          resolve();
+        });
+      });
+    }
+
+    async function switchCamera(deviceId) {
+      if (!deviceId) return;
+      document.getElementById('cameraSelect').disabled = true;
+      document.getElementById('btn-torch').style.display = 'none';
+      try { await startEngine(deviceId); } catch (e) {} 
+      finally { document.getElementById('cameraSelect').disabled = false; }
+    }
+
+    function stopScan() {
+      document.getElementById('scanner-container').style.display = 'none';
+      isTorchOn = false; document.getElementById('btn-torch').classList.remove('active');
+      if (isQuaggaScanning) { Quagga.stop(); isQuaggaScanning = false; }
+    }
+
+    // ── Quagga 解碼與繪圖事件 ──
+    Quagga.onDetected((result) => {
+      if (!isQuaggaScanning) return;
+      const code = result.codeResult.code;
+      if (code === quaggaLastCode) {
+        quaggaCodeCount++;
+        if (quaggaCodeCount >= REQUIRED_MATCHES) processBarcodeResult(code);
+      } else {
+        quaggaLastCode = code; quaggaCodeCount = 1;
+      }
+    });
+
+    Quagga.onProcessed(function(result) {
+      if (!isQuaggaScanning) return;
+      var drawingCtx = Quagga.canvas.ctx.overlay, drawingCanvas = Quagga.canvas.dom.overlay;
+      if (result) {
+        if (result.boxes) {
+          drawingCtx.clearRect(0, 0, parseInt(drawingCanvas.getAttribute("width")), parseInt(drawingCanvas.getAttribute("height")));
+          result.boxes.filter(box => box !== result.box).forEach(box => {
+              Quagga.ImageDebug.drawPath(box, {x: 0, y: 1}, drawingCtx, {color: "green", lineWidth: 2});
+          });
+        }
+        if (result.box) Quagga.ImageDebug.drawPath(result.box, {x: 0, y: 1}, drawingCtx, {color: "#00F", lineWidth: 2});
+        if (result.codeResult && result.codeResult.code) Quagga.ImageDebug.drawPath(result.line, {x: 'x', y: 'y'}, drawingCtx, {color: 'red', lineWidth: 3});
+      }
+    });
+
+    // ── 手電筒邏輯 ──
+    async function checkTorchCapability(track) {
+      const btnTorch = document.getElementById('btn-torch');
+      if (track && typeof track.getCapabilities === 'function') {
+        const caps = track.getCapabilities();
+        const isSupported = !!caps.torch || ('fillLightMode' in caps && caps.fillLightMode.includes('flash'));
+        if (isSupported) {
+          btnTorch.style.display = 'block';
+          if (isTorchOn) {
+            try { await track.applyConstraints({ advanced: [{ torch: true }] }); btnTorch.classList.add('active'); } 
+            catch(e) { isTorchOn = false; btnTorch.classList.remove('active'); }
+          }
+          return;
+        }
+      }
+      btnTorch.style.display = 'none'; isTorchOn = false; btnTorch.classList.remove('active');
+    }
+
+    async function toggleTorch() {
+      let targetState = !isTorchOn;
+      try {
+        const track = Quagga.CameraAccess.getActiveTrack();
+        if (track && typeof track.applyConstraints === 'function') {
+           await track.applyConstraints({ advanced: [{ torch: targetState }] });
+           isTorchOn = targetState;
+           document.getElementById('btn-torch').classList.toggle('active', isTorchOn);
+        }
+      } catch (err) {
+        const btn = document.getElementById('btn-torch');
+        btn.classList.add('error-shake');
+        setTimeout(() => btn.classList.remove('error-shake'), 300);
+        document.getElementById('btn-torch').classList.toggle('active', isTorchOn);
+      }
+    }
+
+    // ── 結果顯示邏輯 ──
+    function manualQuery() {
+      const code = document.getElementById('barcodeInput').value.trim();
+      if (!code || isNaN(code)) {
+        alert(translations[currentLang].alertEmpty); return;
+      }
+      processBarcodeResult(code);
+    }
+
+    function processBarcodeResult(barcode) {
+      if (navigator.vibrate) navigator.vibrate(200);
+      if (isQuaggaScanning) stopScan(); 
+      
+      // 處理顯示
+      let fullBarcode = barcode;
+      if (fullBarcode.length === 12) fullBarcode = "0" + fullBarcode; // UPC 補 0 轉 EAN13
+
+      const prefix = fullBarcode.substring(0, 3);
+      const countryStr = getGS1Country(fullBarcode);
+
+      document.getElementById('barcodeInput').value = fullBarcode;
+      document.getElementById('modalBarcode').innerText = fullBarcode;
+      document.getElementById('modalPrefix').innerText = prefix;
+      document.getElementById('modalCountry').innerText = countryStr;
+      
+      document.getElementById('resultModal').style.display = 'flex';
+    }
+
+    function closeModal() {
+      document.getElementById('resultModal').style.display = 'none';
+    }
+
+    window.onload = () => {
+      changeLanguage();
+    };
+  </script>
+</body>
+</html>
